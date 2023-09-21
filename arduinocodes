@@ -1,0 +1,63 @@
+//ni contoh je okayyy. tak siap lagi hekhek 
+// Include required libraries
+#include <Adafruit_Sensor.h>
+#include <Adafruit_PIR.h>
+
+// Define the PIR sensor pin
+#define PIR_PIN 2
+
+// Define the LED pin
+#define LED_PIN 13
+
+// Variables to track motion detection and timing
+Adafruit_PIR pir(PIR_PIN);
+bool peopleInside = false;  // Track whether people are inside or outside
+unsigned long lastMotionTime = 0;
+const unsigned long motionTimeout = 600000; // 10 minutes in milliseconds
+
+void setup() {
+  // Initialize the PIR sensor
+  pir.begin();
+  
+  // Set LED pin as an output
+  pinMode(LED_PIN, OUTPUT);
+  
+  // Initialize the LED as OFF
+  digitalWrite(LED_PIN, LOW);
+  
+  // Serial communication for debugging
+  Serial.begin(9600);
+  Serial.println("PIR Sensor Example");
+}
+
+void loop() {
+  // Read motion detection status
+  bool motionDetected = pir.read();
+  
+  if (motionDetected) {
+    // Motion detected, turn on the lights
+    digitalWrite(LED_PIN, HIGH);
+    
+    // Update the last motion time
+    lastMotionTime = millis();
+    
+    // If people are outside, mark them as inside
+    if (!peopleInside) {
+      peopleInside = true;
+      Serial.println("People entered, lights turned on.");
+    }
+  } else {
+    // No motion detected
+    unsigned long currentTime = millis();
+    
+    // Check if it's been 10 minutes since the last motion
+    if (currentTime - lastMotionTime >= motionTimeout) {
+      // Turn off the lights if people are inside
+      if (peopleInside) {
+        digitalWrite(LED_PIN, LOW);
+        peopleInside = false;
+        Serial.println("No motion for 10 minutes, lights turned off.");
+      }
+    }
+  }
+}
