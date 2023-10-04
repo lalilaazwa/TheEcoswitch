@@ -1,63 +1,114 @@
-//ni contoh je okayyy. tak siap lagi hekhek 
-// Include required libraries
-#include <Adafruit_Sensor.h>
-#include <Adafruit_PIR.h>
+#include <WiFi.h>
 
-// Define the PIR sensor pin
-#define PIR_PIN 2
+const char* ssid = "TP-Link_C32C"; //ssid
+const char* password = "13384463"; // password
 
-// Define the LED pin
-#define LED_PIN 13
+WiFiServer server(80);
 
-// Variables to track motion detection and timing
-Adafruit_PIR pir(PIR_PIN);
-bool peopleInside = false;  // Track whether people are inside or outside
-unsigned long lastMotionTime = 0;
-const unsigned long motionTimeout = 600000; // 10 minutes in milliseconds
+const int relayPin = 25; // Relay Module
+const int pirPin = 13;  // Pir sensor
+const int micPin = 17;  // Microphone pin
+const int clapThreshold = 512;  // This might need adjustment based on your specific microphone module
+
+bool previousPIRState = LOW; // off of pir sensor
+bool clapDetected = false; // false 
+unsigned long relayOnTimestamp = 0; //no duration iniakky assigned
+unsigned long relayOnDuration = 0; //no duration initially assigned.
+unsigned long lastClapTime = 0;  // To store the time of the last clap
 
 void setup() {
-  // Initialize the PIR sensor
-  pir.begin();
-  
-  // Set LED pin as an output
-  pinMode(LED_PIN, OUTPUT);
-  
-  // Initialize the LED as OFF
-  digitalWrite(LED_PIN, LOW);
-  
-  // Serial communication for debugging
-  Serial.begin(9600);
-  Serial.println("PIR Sensor Example");
+  pinMode(relayPin, OUTPUT); //relay 
+  pinMode(pirPin, INPUT); //pir
+  pinMode(micPin, INPUT); //mic
+  digitalWrite(relayPin, LOW); //relay off
+
+  Serial.begin(115200); // serial communication at a baud rate of 115200 bits per second.
+
+  WiFi.begin(ssid, password); //connect Wi-Fi network with the SSID (network name) and password.
+  while (WiFi.status() != WL_CONNECTED) {  // loop continuously checks the status of the Wi-Fi connection
+    delay(1000); //the loop, it delays for one second (delay(1000);) 
+    Serial.println("Connecting to WiFi..."); //Connected to WiFi to the serial monitor.
+  }
+  Serial.println("Connected to WiFi");
+  Serial.println(WiFi.localIP()); //local IP address of the microcontroller 
+
+  server.begin();
 }
 
 void loop() {
-  // Read motion detection status
-  bool motionDetected = pir.read();
-  
-  if (motionDetected) {
-    // Motion detected, turn on the lights
-    digitalWrite(LED_PIN, HIGH);
-    
-    // Update the last motion time
-    lastMotionTime = millis();
-    
-    // If people are outside, mark them as inside
-    if (!peopleInside) {
-      peopleInside = true;
-      Serial.println("People entered, lights turned on.");
+  WiFiClient client = server.available();
+
+  bool currentPIRState = digitalRead(pirPin);
+
+  if (currentPIRState == HIGH && previousPIRState == LOW) { //checks the PIR sensor transitioned from a LOW to HIGH state
+    if (digitalRead(relayPin) == HIGH) {
+      digitalWrite(relayPin, LOW);
+      relayOnDuration += millis() - relayOnTimestamp; //calculates and updates the relayOnDuration 
+    } else {
+      digitalWrite(relayPin, HIGH);
+      relayOnTimestamp = millis(); //indicating when the relay was turned on.
+      delay(5000); //delay of 5000 milliseconds (5 seconds)
     }
-  } else {
-    // No motion detected
-    unsigned long currentTime = millis();
-    
-    // Check if it's been 10 minutes since the last motion
-    if (currentTime - lastMotionTime >= motionTimeout) {
-      // Turn off the lights if people are inside
-      if (peopleInside) {
-        digitalWrite(LED_PIN, LOW);
-        peopleInside = false;
-        Serial.println("No motion for 10 minutes, lights turned off.");
+  }
+
+  previousPIRState = currentPIRState; //PIR sensor stored in currentPIRState
+
+  // Checking for clap
+  if (!clapDetected && (millis() - lastClapTime > 5000)) { //detection of a clap sound. It has two conditions: clapdetected and millis (at least 5 second have passed
+
+    int micValue = analogRead(micPin); //analog value from a microphone connected to the micPin and stores it in the micValue
+    if (micValue > clapThreshold) {
+      clapDetected = true; 
+      lastClapTime = millis(); //capturing the time of the detected clap for later reference
+      digitalWrite(relayPin, !digitalRead(relayPin));  // Toggle the relay
+    }
+  } else if (millis() - lastClapTime > 5000) {
+    clapDetected = false;  // Reset after 5 seconds 
+  }
+
+  if (client) {
+    String request = client.readStringUntil('\r');  //client's request until it encounters a carriage return character ('\r') 
+    client.flush(); //flushes any remaining data in the client's buffer.
+
+    if (request.indexOf("/toggle") != -1) { //resumably contains an HTTP request received from a client
+      if (digitalRead(relayPin) == LOW) { //relay off
+        digitalWrite(relayPin, HIGH); //relay on
+        relayOnTimestamp = millis();
+      } else {
+        digitalWrite(relayPin, LOW);
+        relayOnDuration += millis() - relayOnTimestamp;
       }
     }
+
+    int relayOnSeconds = (relayOnDuration / 1000) + 3600;  // Added one hour and calculates the total relay-on time in seconds (relayOnSeconds).
+    float billAmount = ((4.0/100) * (relayOnSeconds/3600.0)) * 0.175; //calculates a hypothetical bill amount (billAmount)
+
+    client.println("HTTP/1.1 200 OK"); //sends an HTTP response status code of "200 OK," indicating a successful request
+    client.println("Content-type:text/html"); //pecifies the content type of the response as HTML.
+    client.println("Connection: close");
+    client.println();
+    client.println("<!DOCTYPE html><html>");
+    client.println("<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
+    client.println("<style>");
+    client.println("body { font-family: 'Arial', sans-serif; background: linear-gradient(to right, #2b5876, #4e4376); color: #f3f3f3; }");
+    client.println("h1 { border-bottom: 2px solid #f3f3f3; padding-bottom: 10px; }");
+    client.println("p { font-size: 1.1em; }");
+    client.println("button { background-color: #04AA6D; border: none; color: white; padding: 15px 32px; text-align: center;");
+    client.println("text-decoration: none; display: inline-block; font-size: 16px; margin: 4px 2px; cursor: pointer; border-radius: 4px; transition: background-color 0.3s; }");
+    client.println("button:hover { background-color: #03a058; }");
+    client.println("</style>"); //Defines the body of the HTML document,
+    client.println("</head>");
+    client.println("<body><center>");
+    client.println("<h1>ECOSWITCH Control</h1>");  //A heading "ECOSWITCH Control."
+    client.println("<p>by Xo_leiune</p>");  //information about the author ("by Xo_leiune").
+    client.println("<button onclick=\"location.href='/toggle'\">Toggle Switch</button>");  //A button labeled "Toggle Switch" that allows the user to control a switch
+    client.println("<p>Electric power: 40 watt</p>");  //Information about electric power consumption (40 watts).
+    client.println("<p>Switch Status: " + String(digitalRead(relayPin) == HIGH ? "ON" : "OFF") + "</p>");  //Displays the status of the switch (ON or OFF) based on a condition.
+    client.println("<p>Light ON Duration: " + String(relayOnSeconds) + " seconds </p>"); //Shows the duration the light has been ON in seconds
+    client.println("<p>Your Electric Bill is RM " + String(billAmount, 2) + "</p>");  // Calculates and displays a hypothetical electric bill amount in Malaysian Ringgit (RM).
+    client.println("</center></body></html>");
+    client.println();
+
+    delay(100);
   }
 }
