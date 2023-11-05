@@ -1,0 +1,199 @@
+#define BLYNK_TEMPLATE_ID "TMPL6vV6qy" // Template ID
+#define BLYNK_TEMPLATE_NAME "EcoswitchX" // represents the name or title of the Blynk template
+#define BLYNK_AUTH_TOKEN "KIatJNpdNeMMhAJkCSvwPqyeEXe" // used to connect the device or application to the Blynk server
+#define BLYNK_PRINT Serial // configures the way Blynk library outputs information 
+#define PIR_SENSOR_PIN_A 5 // pir A pin
+#define PIR_SENSOR_PIN_B 26 // pir B pin
+#define RELAY_PIN 2
+#define SOUND_SENSOR_PIN 34
+#define RESET_BUTTON_PIN 3  // Define pin number for the reset button
+#define SDA_PIN 21  // Define the SDA pin
+#define SCL_PIN 22  // Define the SCL pin
+
+
+#include <BlynkSimpleEsp32.h> // Library used to connect esp32 to the blynk IOT platform
+#include <Wire.h> // I2C communication a common serial communication protocol
+#include "DFRobot_INA219.h" // header file INA219.h >
+#include <Arduino.h> // Arduino-based program
+
+char ssid[] = "sma5555ints"; // SSID (Service Set Identifier) of modem Wi-Fi 
+char pass[] = "sma555intsx"; // password of Wi-Fi network
+
+//Only in blynk
+BLYNK_WRITE(V5) { // virtual (switch on/off)
+int relaySwitchState = param.asInt(); // Get the state of the Blynk switch on V5
+
+  if (relaySwitchState == HIGH) { // On
+    digitalWrite(RELAY_PIN, HIGH); // Turn on the relay
+    Serial.println("Relay is ON (via Blynk switch)");
+  } else {
+    digitalWrite(RELAY_PIN, LOW); // Turn off the relay
+    Serial.println("Relay is OFF (via Blynk switch)");
+  }
+}
+
+unsigned long cooldown = 2000; // 2 seconds cooldown // Variable "colddown" 2s
+unsigned long lastDetectionTime = 0; // store the timestamp (in milliseconds)
+unsigned long lastClapTime = 0; // store the timestamp of the last time a clap
+unsigned long lastBlynkUpdate = 0;  // Store the timestamp of the last update 
+bool microphoneSwitchState = LOW; // (true/false) variable that represents the state of a microphone switch  
+int M = 0; // comes in
+int N = 0; // goes out
+int P = 0;  // Declare P as a global variable
+
+DFRobot_INA219_IIC ina219(&Wire, INA219_I2C_ADDRESS4);
+float ina219Reading_mA = 1000; // give data
+float extMeterReading_mA = 1000;
+float cost = 0.0; // Declare cost as a global variable
+
+// Setup
+void setup() { 
+  Blynk.run(); 
+  Serial.begin(9600);
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+  Serial.begin(9600); // Start 
+  Wire.begin(SDA_PIN, SCL_PIN);
+  ina219.begin(); // reading wattmeter starting
+  ina219.linearCalibrate(ina219Reading_mA, extMeterReading_mA); //calibrating the INA219 sensor
+  unsigned long currentTime = millis(); // current time in milliseconds
+lastBlynkUpdate = millis(); //  track when a specific event or update last occurred
+  Serial.begin(9600); // receive data through its serial port
+  pinMode(PIR_SENSOR_PIN_A, INPUT); // pin
+  pinMode(PIR_SENSOR_PIN_B, INPUT); // pin
+  pinMode(SOUND_SENSOR_PIN, INPUT); // pin
+  pinMode(RELAY_PIN, OUTPUT); // reading the state of a push-button switch
+  pinMode(RESET_BUTTON_PIN, INPUT_PULLUP);  // Set the pin mode for reset button
+  digitalWrite(RELAY_PIN, LOW); // send to relay to turn off all external output 
+
+}
+
+// VLOOP
+void loop() {
+  Blynk.run(); // working with the Blynk IoT platform
+  unsigned long currentTime = millis(); // measure time intervals or control timing within a program
+  float shuntVoltage_V = ina219.getShuntVoltage_mV() / 1000; // shunt voltage is often used in current measurements
+  float busVoltage_V = ina219.getBusVoltage_V(); // result is stored in a variable named busVoltage_V
+  float power_W = ina219.getPower_mW() / 1000; // current flowing through the circuit
+// reading wattmeter  
+  
+// Send to Blynk  
+  Blynk.virtualWrite(V1, busVoltage_V);  // Send Bus Voltage to Virtual Pin V1
+  Blynk.virtualWrite(V2, current_A);     // Send Current to Virtual Pin V2
+  Blynk.virtualWrite(V3, power_W); 
+
+// Calculation system
+    // Calculate kWh and hours when P > 0 // start calculating
+  float kWh = power_W / 1000.0 * (float(currentTime) / 3600000.0); // Convert milliseconds to hours
+  float hoursWithP = float(P) * (float(currentTime) / 3600000.0);  // Convert milliseconds to hours
+
+// Calculate cost (S)
+ cost = kWh * 17.50; // Kwh x 17.5sen (sesb rate)
+
+// Send data to Blynk every 1 minutes (60000 milliseconds)
+  if (currentTime - lastBlynkUpdate >= 60000) { //  has passed since the last update to Blynk 
+    // Calculate cost (S)
+    float cost = kWh * 17.50; // calculate the cost in some currency 
+   // Send kWh and hoursWithP to Blynk
+     Blynk.virtualWrite(V0, hoursWithP); // update a widget in the Blynk app with a new value(VO), widget on the Blynk project(hoursWithP)
+
+// You can also send cost (S) to another virtual pin if needed
+     Blynk.virtualWrite(V10, kWh); // energy consumption value
+      Blynk.virtualWrite(V4, cost); // display the calculated cost
+
+    // Update the last update time
+    lastBlynkUpdate = currentTime;
+
+   // Print the cost to the serial monitor
+    Serial.print("Cost: $");
+    Serial.println(cost, 2); // Display cost with 2 decimal places
+  }
+
+ // Check power and control LED on virtual pin V8
+  if (power_W > 2.0) {
+    Blynk.virtualWrite(V8, HIGH); // Turn on the LED widget
+  } else {
+    Blynk.virtualWrite(V8, LOW); // Turn off the LED widget
+  }
+
+
+  // Reset button logic
+  int resetButtonState = digitalRead(RESET_BUTTON_PIN);
+  if (resetButtonState == LOW) {  // If the reset button is pressed
+    M = 0; // Reset everything
+    N = 0; // Resetting M and N will make P equal to zero.
+    Serial.println("Reset button pressed. M and N reset to zero.");
+  }
+
+  int P = M - N; 
+  if (P < 0) {
+    P = 0; 
+    M = 0; 
+    N = 0;
+  }
+  Blynk.virtualWrite(V6, P);
+  // PIR sensor logic
+  if (currentTime - lastDetectionTime > cooldown) {
+    int pirValueA = digitalRead(PIR_SENSOR_PIN_A); // pin5
+    int pirValueB = digitalRead(PIR_SENSOR_PIN_B); // pin26
+
+    if (pirValueA == HIGH && pirValueB == LOW) { // If this condition is true, the code inside the block will execute
+      lastDetectionTime = currentTime; // 
+      Serial.println("Motion detected by PIR A"); // serial monitor indicating that motion has been detected by PIR A
+      delay(1000); // to avoid false positives or multiple detections within a short time frame
+      pirValueB = digitalRead(PIR_SENSOR_PIN_B); // 
+      if (pirValueB == HIGH) { // PIR sensor labeled as B has detected motion
+        M++; // keeps track of the number of motion sequences detected
+        Serial.println("Sequence detected: A --> B"); // serial monitor indicating that a motion sequence from PIR A to PIR B has been detected
+      }
+    } 
+    else if (pirValueB == HIGH && pirValueA == LOW) { // checks a conditional statement
+      lastDetectionTime = currentTime; // record the time when motion was last detected
+      Serial.println("Motion detected by PIR B"); // serial monitor indicating that motion has been detected 
+      delay(1000); 
+      pirValueA = digitalRead(PIR_SENSOR_PIN_A); // check if it has detected motion
+      if (pirValueA == HIGH) { // active
+        N++; // represents a count of motion sequences
+        Serial.println("Sequence detected: B --> A"); // serial monitor indicating that a motion sequence from PIR B to PIR A has been detected
+      }
+    }
+
+    Serial.print("M: "); // any subsequent data will be printed on the same line
+    Serial.println(M); //  will be displayed on a new line
+    Serial.print("N: "); // to the serial monitor, similar to the first line
+    Serial.println(N); // to the serial monitor and starts a new line after printing
+    Serial.print("P (M - N): "); // to the serial monitor
+    Serial.println(P); // to the serial monitor and starts a new line after printing
+  }
+  
+  // Check for clap sound, only when P >= 1 
+  if (P >= 1) { // conditional statement that checks whether the value of the variable P is greater than or equal to 1
+    if (!microphoneSwitchState) { //the variable inverts its logical value
+      digitalWrite(RELAY_PIN, HIGH); // Turn ON the relay if it's not toggled by clap
+      Serial.println("Relay is ON due to P >= 1"); // turned ON because the value of P is greater than or equal to 1
+    }
+  
+
+// Thereshold Condition
+    int soundLevel = analogRead(SOUND_SENSOR_PIN); // an analog value from a sound sensor connected to the Arduino board
+    if (soundLevel > 412 && currentTime - lastClapTime > 400) { //  prevent multiple claps from being detected in rapid succession
+      microphoneSwitchState = !microphoneSwitchState; // Toggle the state
+      Serial.println("Clap detected, toggling relay state"); // sends a message to the serial port
+      lastClapTime = currentTime; // keep track of the time of the last clap detection
+      
+      if (microphoneSwitchState) {
+        digitalWrite(RELAY_PIN, LOW); // Toggle relay state // line effectively turns the relay off
+        Serial.println("Relay is OFF due to clap detection");
+      } else {
+        digitalWrite(RELAY_PIN, HIGH); // This line effectively turns the relay on
+        Serial.println("Relay is ON due to clap detection"); // relay has been turned off due to detecting a clap (assuming that's what microphoneSwitchState represents)
+      }
+    }
+  } 
+  else if (P == 0) { // All realy will be zero
+    digitalWrite(RELAY_PIN, LOW); // Turn OFF the relay
+    microphoneSwitchState = false; // Reset the clap toggle state
+    Serial.println("Relay and microphone are OFF due to P = 0");
+  }
+}
+
+CONCLUSION; PEOPLE TRIGGER ALL SENSOR
